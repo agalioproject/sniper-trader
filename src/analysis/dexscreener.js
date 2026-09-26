@@ -70,10 +70,16 @@ async function getTokenMarket(address) {
       marketCapUsd,
       liquidityUsd,
       priceUsd,
+      priceNative: Number(best.priceNative || 0) || 0, // price in SOL (or chain native) when available
       volume24h,
       pairUrl: best.url || null,
       pairAddress: best.pairAddress || null,
       dexId: best.dexId || null,
+      baseTokenSymbol: (best.baseToken && best.baseToken.symbol) || null,
+      baseTokenName: (best.baseToken && best.baseToken.name) || null,
+      priceChange5m: Number(best.priceChange?.m5 || 0) || 0,
+      priceChange1h: Number(best.priceChange?.h1 || 0) || 0,
+      priceChange24h: Number(best.priceChange?.h24 || 0) || 0,
     };
   } catch (err) {
     console.warn(`[dexscreener] lookup failed for ${address}: ${err.message}`);

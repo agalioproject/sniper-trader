@@ -1,6 +1,7 @@
 const TelegramBot = require('node-telegram-bot-api');
 const { TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, DRY_RUN, PRICE_POLL_INTERVAL_MS } = require('../config');
 const { getSupabase } = require('../live/supabaseClient');
+const { analyzeAddress, SOL_CA_RE, EVM_CA_RE } = require('./analyze');
 const { getConfig, refresh, applyLocal, COLUMNS, MIGRATION_KEYS, isMigrated } = require('../live/liveConfig');
 const { getDailyCount } = require('../analysis/dailyLimiter');
 const { scannerText, positionsText, heartbeatText, scannerHeadline, balanceText } = require('./reports');
@@ -577,6 +578,7 @@ function start() {
     { command: 'setcapital', description: 'Solana capital % per trade' },
     { command: 'setbsccapital', description: 'BSC capital % per trade' },
     { command: 'help', description: 'All commands' },
+    { command: 'analyze', description: 'Analyze a contract address' },
   ]).catch((err) => console.error('[telegram] setMyCommands failed:', err.message));
 
   const send = (chatId, v) => b.sendMessage(chatId, v.text, { reply_markup: v.reply_markup });
@@ -630,7 +632,24 @@ function start() {
     send(msg.chat.id, scannerView(getConfig()));
   });
 
-  b.onText(/^\/cancel\b/i, (msg) => {
+  
+  b.onText(/^\/analyze(?:@\w+)?(?:\s+(.+))?\s*$/i, async (msg, match) => {
+    const chatId = msg.chat.id;
+    if (!isAuthorized(chatId)) return;
+    const arg = (match[1] || '').trim();
+    if (!arg) {
+      return b.sendMessage(chatId, 'Usage: /analyze <contract address>\nOr just paste a Solana mint / 0x address.');
+    }
+    await b.sendMessage(chatId, '🔎 Analyzing…');
+    try {
+      const result = await analyzeAddress(arg.split(/\s+/)[0]);
+      await b.sendMessage(chatId, result.text, { parse_mode: 'Markdown', disable_web_page_preview: true });
+    } catch (err) {
+      await b.sendMessage(chatId, `Analyze failed: ${err.message}`);
+    }
+  });
+
+b.onText(/^\/cancel\b/i, (msg) => {
     if (!isAuthorized(msg.chat.id)) return;
     pending.delete(msg.chat.id);
     send(msg.chat.id, mainView(getConfig(), 'Cancelled.'));
@@ -698,6 +717,7 @@ function start() {
   }
 
   // ---- typed values after tapping "✏️ Type your own value" ----
+  // Also: if the message is just a contract address, run /analyze.
   b.on('message', async (msg) => {
     const chatId = msg.chat.id;
     const text = (msg.text || '').trim();
@@ -707,7 +727,21 @@ function start() {
       return;
     }
     const p = pending.get(chatId);
-    if (!p) return;
+    if (!p) {
+      // plain CA paste → analyze
+      if (!isAuthorized(chatId)) return;
+      const token = text.split(/\s+/)[0];
+      if (text.length <= 80 && (SOL_CA_RE.test(token) || EVM_CA_RE.test(token))) {
+        await b.sendMessage(chatId, '🔎 Analyzing pasted CA…');
+        try {
+          const result = await analyzeAddress(token);
+          await b.sendMessage(chatId, result.text, { parse_mode: 'Markdown', disable_web_page_preview: true });
+        } catch (err) {
+          await b.sendMessage(chatId, `Analyze failed: ${err.message}`);
+        }
+      }
+      return;
+    }
     if (!isAuthorized(chatId)) return;
     if (Date.now() - p.ts > PENDING_TTL_MS) {
       pending.delete(chatId);

@@ -11,6 +11,7 @@ const { buyOnPump, sellOnPump } = require('./pumpPortal');
 const { getSolBalance, loadWallet } = require('../solana/wallet');
 const { logTrade } = require('../db/tradeLog');
 const { getConfig } = require('../live/liveConfig');
+const { getTokenMarket } = require('../analysis/dexscreener');
 const stateSync = require('../live/stateSync');
 const telegram = require('../telegram/bot');
 
@@ -371,15 +372,41 @@ function monitorPosition(mint) {
     try {
       let currentSolOut = position.lastValueNative;
       let pnlPct = position.lastPnlPct || 0;
-      try {
-        if (position.tokenAmountRaw) {
+      let priced = false;
+
+      // 1) Jupiter route (post-migration / real DEX)
+      if (position.tokenAmountRaw) {
+        try {
           const quote = await getQuote(mint, SOL_MINT, position.tokenAmountRaw);
           currentSolOut = Number(quote.outAmount) / LAMPORTS_PER_SOL;
           pnlPct = ((currentSolOut - position.sizeSol) / position.sizeSol) * 100;
+          priced = true;
+        } catch (_) {
+          /* fall through to DexScreener */
         }
-      } catch (quoteErr) {
-        // Pre-migration: Jupiter has no route. Force exit on max-hold only;
-        // TP/SL from Jupiter quotes unavailable until migration.
+      }
+
+      // 2) DexScreener native price — works on bonding-curve / pre-Jupiter pairs
+      if (!priced) {
+        try {
+          const mkt = await getTokenMarket(mint);
+          if (mkt && mkt.priceNative > 0 && position.tokenAmountRaw) {
+            // pump.fun tokens are 6 decimals; if wrong, PnL scale is off but direction still works for exits
+            const decimals = position.decimals != null ? position.decimals : 6;
+            const tokens = Number(position.tokenAmountRaw) / 10 ** decimals;
+            currentSolOut = tokens * mkt.priceNative;
+            if (position.sizeSol > 0) {
+              pnlPct = ((currentSolOut - position.sizeSol) / position.sizeSol) * 100;
+              priced = true;
+            }
+          }
+        } catch (_) {
+          /* ignore */
+        }
+      }
+
+      // 3) Still no price → only max-hold can force exit (TP/SL need a price)
+      if (!priced) {
         const ageMsProbe = Date.now() - position.openedAt;
         const rulesProbe = resolveExit(position.exit, getConfig());
         if (ageMsProbe >= rulesProbe.maxHoldMs) {
