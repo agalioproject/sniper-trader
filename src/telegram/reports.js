@@ -93,7 +93,7 @@ function scannerText(cfg, minutes = 60) {
     lines.push(blockers.length ? `  ⛔ Not entering now: ${blockers.join('; ')}` : '  ✅ Ready to enter the next token that passes');
   }
 
-  lines.push('', `Entry filter: tier ${cfg.minRecommendTier === 'LOW' ? 'LOW only' : 'LOW+MEDIUM'} • risk score ≤ ${cfg.maxRiskScore} • dev ≤ ${cfg.maxDevPercent}% • top10 ≤ ${cfg.maxTop10Percent}%`);
+  lines.push('', `Entry filter: tier ${cfg.minRecommendTier === 'LOW' ? 'LOW only' : 'LOW+MEDIUM'} • risk score ≤ ${cfg.maxRiskScore} • MC ≥ $${cfg.minMarketCapUsd ?? 10000} • dev ≤ ${cfg.maxDevPercent}% • top10 ≤ ${cfg.maxTop10Percent}%`);
   if (cfg.minRecommendTier === 'LOW_MEDIUM') {
     lines.push(`MEDIUM allowance: dev ≤ ${cfg.mediumMaxDevPercent}% • top10 ≤ ${cfg.mediumMaxTop10Percent}% • score ≤ ${cfg.mediumMaxScore}`);
   }

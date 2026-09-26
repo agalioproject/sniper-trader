@@ -19,6 +19,7 @@ const { canSell } = require('../trading/safety');
 const { tryConsumeDailySlot } = require('./dailyLimiter');
 const { getConfig } = require('../live/liveConfig');
 const debull = require('../knowledge/debull');
+const { getTokenMarket } = require('./dexscreener');
 
 const RISK_TIERS = [
   { max: 25, label: 'LOW' },
@@ -166,6 +167,35 @@ async function assessSolanaToken(mint, { requireSellable = true } = {}) {
     else reasons.push('DE-BULL: ' + category + ' preferred over brand-new launches (score ' + catBonus + ').');
   }
 
+  // DexScreener market-cap gate (default $10k). Brand-new curve coins often
+  // have no pair yet → treated as MC 0 → blocked until they clear the floor.
+  let marketCapUsd = null;
+  let liquidityUsd = null;
+  const minMc = Number(cfg.minMarketCapUsd ?? 10000);
+  if (minMc > 0) {
+    try {
+      const mkt = await getTokenMarket(mint);
+      if (mkt) {
+        marketCapUsd = mkt.marketCapUsd;
+        liquidityUsd = mkt.liquidityUsd;
+        reasons.push(`DexScreener MC ~$${Math.round(marketCapUsd).toLocaleString()} · liq ~$${Math.round(liquidityUsd).toLocaleString()}.`);
+      } else {
+        marketCapUsd = 0;
+        reasons.push('DexScreener has no pair yet — market cap treated as $0 (too early).');
+      }
+    } catch (err) {
+      marketCapUsd = 0;
+      reasons.push(`DexScreener lookup failed (${err.message}) — treating MC as $0.`);
+    }
+    if (marketCapUsd < minMc) {
+      return reject(
+        'solana',
+        mint,
+        `Market cap ~$${Math.round(marketCapUsd).toLocaleString()} is below your min $${minMc.toLocaleString()} (DexScreener). Wait until it clears $10k+.`
+      );
+    }
+  }
+
   const finalized = finalize({
     chain: 'solana',
     address: mint,
@@ -177,6 +207,8 @@ async function assessSolanaToken(mint, { requireSellable = true } = {}) {
     top10Percent,
     curveProgressPct: progressPct,
     migrated,
+    marketCapUsd,
+    liquidityUsd,
   });
 
   // Tier alone already disqualifies it (too risky) — migration status is
@@ -329,6 +361,33 @@ async function assessBscToken(address) {
     reasons.push('Holdings look broadly distributed — reads as a community coin rather than a dev-controlled one.');
   }
 
+  let marketCapUsd = null;
+  let liquidityUsd = null;
+  const minMc = Number(cfg.minMarketCapUsd ?? 10000);
+  if (minMc > 0) {
+    try {
+      const mkt = await getTokenMarket(address);
+      if (mkt) {
+        marketCapUsd = mkt.marketCapUsd;
+        liquidityUsd = mkt.liquidityUsd;
+        reasons.push(`DexScreener MC ~$${Math.round(marketCapUsd).toLocaleString()} · liq ~$${Math.round(liquidityUsd).toLocaleString()}.`);
+      } else {
+        marketCapUsd = 0;
+        reasons.push('DexScreener has no pair yet — market cap treated as $0 (too early).');
+      }
+    } catch (err) {
+      marketCapUsd = 0;
+      reasons.push(`DexScreener lookup failed (${err.message}) — treating MC as $0.`);
+    }
+    if (marketCapUsd < minMc) {
+      return reject(
+        'bsc',
+        address,
+        `Market cap ~$${Math.round(marketCapUsd).toLocaleString()} is below your min $${minMc.toLocaleString()} (DexScreener).`
+      );
+    }
+  }
+
   return finalize({
     chain: 'bsc',
     address,
@@ -340,6 +399,8 @@ async function assessBscToken(address) {
     top10Percent,
     curveProgressPct: null,
     migrated: null,
+    marketCapUsd,
+    liquidityUsd,
   });
 }
 

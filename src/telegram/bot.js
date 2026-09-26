@@ -130,6 +130,17 @@ const SETTINGS = {
     parent: 'm:exit',
     describe: () => `If neither take-profit nor stop-loss has fired by then, the bot sells anyway. Auto: LOW 20 · MEDIUM 12 · HIGH 6 minutes.`,
   },
+  minMarketCapUsd: {
+    cmd: 'setminmcap',
+    title: '💵 Min market cap (DexScreener)',
+    unit: '$',
+    min: 0,
+    max: 500000,
+    presets: [0, 5000, 10000, 25000, 50000, 69000],
+    steps: [1000, 5000],
+    parent: 'm:risk',
+    describe: (c) => `Only enter tokens with DexScreener market cap ≥ $${Number(c.minMarketCapUsd || 0).toLocaleString()}. Default $10,000. Set 0 to disable. Brand-new launches with no pair are treated as $0 and blocked.`,
+  },
   maxRiskScore: {
     cmd: 'setscore',
     title: '🎚 Entry quality (max risk score)',
@@ -322,7 +333,7 @@ function statusText(cfg) {
     `Min tier to recommend: ${cfg.minRecommendTier === 'LOW' ? 'LOW only' : 'LOW + MEDIUM'}`,
     `Daily quota used: ${getDailyCount()}/${cfg.maxTokensPerDay}`,
     `Exit: TP ${cfg.takeProfitPct > 0 ? '+' + fmt(cfg.takeProfitPct) + '%' : 'auto'} | SL ${cfg.stopLossPct > 0 ? '−' + fmt(cfg.stopLossPct) + '%' : 'auto'} | max hold ${cfg.maxHoldMin > 0 ? fmt(cfg.maxHoldMin) + 'm' : 'auto'}`,
-    `Risk limits: score ≤ ${fmt(cfg.maxRiskScore)} | dev% ≤ ${fmt(cfg.maxDevPercent)} | top10% ≤ ${fmt(cfg.maxTop10Percent)}`,
+    `Risk limits: score ≤ ${fmt(cfg.maxRiskScore)} | MC ≥ $${fmt(cfg.minMarketCapUsd)} | dev% ≤ ${fmt(cfg.maxDevPercent)} | top10% ≤ ${fmt(cfg.maxTop10Percent)}`,
     '',
     scannerHeadline() || 'Scanner: no chain running',
     `Open positions: ${runtime.getOpenPositions().length}`,
@@ -526,7 +537,7 @@ const HELP_TEXT =
   `/setsl <pct> — stop loss % (sell if down this much)\n` +
   `/setmaxhold <min> — force-sell after this many minutes\n\n` +
   `Selectivity & safety:\n` +
-  `/setscore <n> — entry quality: only tokens with risk score ≤ n\n` +
+  `/setscore <n> — entry quality: only tokens with risk score ≤ n\n/setminmcap <n> — min DexScreener market cap USD (default 10000)\n` +
   `/setmediumdev, /setmediumtop10, /setmediumscore — looser limits used ONLY for MEDIUM-tier tokens (needs 🛡 Risk tier = LOW+MEDIUM)\n` +
   `/setbuytax, /setselltax — BSC only: reject tokens taxed above this %\n` +
   `/setheartbeat <min|off> — "still scanning" summary every N minutes\n` +
@@ -907,7 +918,7 @@ function announceStartup(delayMs = 8000) {
         '🚀 Scanner started',
         DRY_RUN ? '🧪 DRY RUN — no real trades' : '🔴 LIVE — real trades',
         scannerHeadline() || 'No chain running',
-        `Entry: tier ${cfg.minRecommendTier === 'LOW' ? 'LOW only' : 'LOW+MEDIUM'} · score ≤ ${fmt(cfg.maxRiskScore)} · ${getDailyCount()}/${cfg.maxTokensPerDay} used today`,
+        `Entry: tier ${cfg.minRecommendTier === 'LOW' ? 'LOW only' : 'LOW+MEDIUM'} · score ≤ ${fmt(cfg.maxRiskScore)} · MC ≥ $${fmt(cfg.minMarketCapUsd)} · ${getDailyCount()}/${cfg.maxTokensPerDay} used today`,
         `Exit: TP ${cfg.takeProfitPct > 0 ? '+' + fmt(cfg.takeProfitPct) + '%' : 'auto'} · SL ${cfg.stopLossPct > 0 ? '−' + fmt(cfg.stopLossPct) + '%' : 'auto'}`,
         cfg.paused ? '⏸ Trading is STOPPED — tap /menu → Start trading.' : '🟢 Trading is on.',
         'Send /scanner any time to see what it is checking.',

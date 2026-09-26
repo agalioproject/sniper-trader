@@ -29,13 +29,15 @@ let cached = {
   // BSC-only: reject any token whose buy or sell tax exceeds these.
   maxBuyTaxPct: 50,
   maxSellTaxPct: 50,
+  // DexScreener-enforced floor: do not enter below this USD market cap.
+  minMarketCapUsd: 10000,
 };
 
 // The settings added by supabase/migrations/002_*.sql and 003_*.sql. Until
 // those have been run, these live in memory only.
 const MIGRATION_KEYS = [
   'takeProfitPct', 'stopLossPct', 'maxHoldMin', 'maxRiskScore', 'heartbeatMin',
-  'mediumMaxDevPercent', 'mediumMaxTop10Percent', 'mediumMaxScore', 'maxBuyTaxPct', 'maxSellTaxPct',
+  'mediumMaxDevPercent', 'mediumMaxTop10Percent', 'mediumMaxScore', 'maxBuyTaxPct', 'maxSellTaxPct', 'minMarketCapUsd',
 ];
 let migrated = true;
 
@@ -62,6 +64,7 @@ const COLUMNS = {
   mediumMaxScore: 'medium_max_score',
   maxBuyTaxPct: 'max_buy_tax_pct',
   maxSellTaxPct: 'max_sell_tax_pct',
+  minMarketCapUsd: 'min_market_cap_usd',
 };
 
 // Value from a DB column, or the last known value if the column doesn't exist yet.
@@ -94,6 +97,7 @@ function mapRow(row) {
     mediumMaxScore: num(row, 'medium_max_score', cached.mediumMaxScore),
     maxBuyTaxPct: num(row, 'max_buy_tax_pct', cached.maxBuyTaxPct),
     maxSellTaxPct: num(row, 'max_sell_tax_pct', cached.maxSellTaxPct),
+    minMarketCapUsd: num(row, 'min_market_cap_usd', cached.minMarketCapUsd),
   };
 }
 
