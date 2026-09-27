@@ -31,11 +31,11 @@ async function bootSolana() {
   const detector = new PumpFunDetector(async ({ mint, signature, launchpad, launchpadName }) => {
     if (launchpadName) console.log(`[solana] launch from ${launchpadName}`);
     runtime.recordLaunch('solana');
-    console.log(`[launch] new pump.fun token detected: ${mint} (tx ${signature})`);
+    console.log(`[launch] new token detected: ${mint} (tx ${signature})`);
     await trySolanaPosition(mint);
   });
   detector.start();
-  console.log('[boot] ✅ listening for new pump.fun launches (Solana)...');
+  console.log('[boot] ✅ listening for Solana launchpads (pump.fun, LaunchLab, Meteora DBC, Moonshot, Boop)...');
 
   if (config.ENABLE_GRADUATION_WATCH) {
     graduationWatcher.start((mint) => enterFromGraduation(mint));
