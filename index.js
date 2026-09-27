@@ -28,7 +28,8 @@ async function bootSolana() {
     console.warn('[boot] could not fetch SOL balance yet:', err.message);
   }
 
-  const detector = new PumpFunDetector(async ({ mint, signature }) => {
+  const detector = new PumpFunDetector(async ({ mint, signature, launchpad, launchpadName }) => {
+    if (launchpadName) console.log(`[solana] launch from ${launchpadName}`);
     runtime.recordLaunch('solana');
     console.log(`[launch] new pump.fun token detected: ${mint} (tx ${signature})`);
     await trySolanaPosition(mint);

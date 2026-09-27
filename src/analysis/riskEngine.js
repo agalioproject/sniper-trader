@@ -166,8 +166,11 @@ async function assessSolanaToken(mint, { requireSellable = true } = {}) {
       return reject('solana', mint, 'Freeze authority is still active — the creator can block anyone from trading at will.');
     }
     if (sec.mintable && sec.mintable.status === '1') {
-      score += 20;
-      reasons.push('Mint authority is still active — supply can be inflated after you buy.');
+      return reject(
+        'solana',
+        mint,
+        'HARD BLOCK: mint authority is still active — creator can print unlimited tokens and dilute you to zero.'
+      );
     }
     if (Array.isArray(sec.holders) && sec.holders.length) {
       top10Percent = sec.holders.reduce((sum, h) => sum + Number(h.percent || 0), 0) * 100;
@@ -405,8 +408,7 @@ async function assessBscToken(address) {
   if (ownBlock) return ownBlock;
 
   if (sec.is_mintable === '1') {
-    score += 20;
-    reasons.push('Contract can mint new supply after launch.');
+    return reject('bsc', address, 'HARD BLOCK: contract can mint new supply after launch.');
   }
   if (sec.hidden_owner === '1' || sec.can_take_back_ownership === '1') {
     score += 20;

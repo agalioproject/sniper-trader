@@ -1,6 +1,6 @@
 # Meme Coin Scanner (Solana + BNB Smart Chain)
 
-Watches for new meme coin launches on **Solana (pump.fun)** and **BNB Smart
+Watches for new meme coin launches on **Solana (pump.fun, Raydium LaunchLab/LetsBonk, Meteora DBC/Believe, Moonshot, Boop)** and **BNB Smart
 Chain (PancakeSwap)**, runs every one through a risk engine (dev/creator
 holding %, holder concentration, honeypot/tax checks, LP lock status,
 pump.fun migration/curve status), and only recommends the small, very
