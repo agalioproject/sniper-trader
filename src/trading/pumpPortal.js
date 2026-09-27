@@ -19,7 +19,20 @@ function priorityFeeSol() {
 }
 
 function buySlippagePct() {
-  return Math.max(1, Math.round(Number(SLIPPAGE_BPS || 500) / 100));
+  // pump.fun curves move fast — 15% is often too tight (TooMuchSolRequired 0x1772).
+  // Floor at 25% unless env asks for more via SLIPPAGE_BPS.
+  const fromEnv = Math.round(Number(SLIPPAGE_BPS || 2500) / 100);
+  return Math.max(25, fromEnv);
+}
+
+function isTooMuchSolError(err) {
+  const msg = String(err && err.message || err || '');
+  return (
+    /0x1772/i.test(msg) ||
+    /TooMuchSol/i.test(msg) ||
+    /Too much SOL required/i.test(msg) ||
+    /slippage/i.test(msg)
+  );
 }
 
 /**
@@ -153,14 +166,46 @@ async function buyOnPump(mint, solAmount) {
     balBefore = 0n;
   }
 
-  const { tx, wallet } = await portalTrade({
-    action: 'buy',
-    mint,
-    amount: sizeSol,
-    denominatedInSol: true,
-    slippage: buySlippagePct(),
-  });
-  const sent = await sendSigned(tx, wallet);
+  // Slippage ladder: curves move between quote and land → TooMuchSolRequired (0x1772).
+  // Retry with higher slippage, then smaller size.
+  const slipSteps = [
+    { sol: sizeSol, slip: buySlippagePct() },
+    { sol: sizeSol, slip: Math.max(40, buySlippagePct() + 15) },
+    { sol: sizeSol * 0.6, slip: 50 },
+    { sol: sizeSol * 0.4, slip: 50 },
+  ];
+
+  let sent = null;
+  let usedSol = sizeSol;
+  let lastErr = null;
+  for (let i = 0; i < slipSteps.length; i += 1) {
+    const step = slipSteps[i];
+    if (!(step.sol > 0.001)) continue;
+    try {
+      console.log(`[pumpPortal] buy attempt ${i + 1}/${slipSteps.length}: ${step.sol.toFixed(4)} SOL @ ${step.slip}% slip`);
+      const { tx, wallet } = await portalTrade({
+        action: 'buy',
+        mint,
+        amount: step.sol,
+        denominatedInSol: true,
+        slippage: step.slip,
+      });
+      sent = await sendSigned(tx, wallet);
+      usedSol = step.sol;
+      lastErr = null;
+      break;
+    } catch (err) {
+      lastErr = err;
+      if (isTooMuchSolError(err) && i < slipSteps.length - 1) {
+        console.warn(`[pumpPortal] TooMuchSolRequired — retrying with more slippage / less size`);
+        await new Promise((r) => setTimeout(r, 400));
+        continue;
+      }
+      throw err;
+    }
+  }
+  if (lastErr) throw lastErr;
+  if (!sent) throw new Error('buyOnPump: no successful send');
 
   // Wait briefly then read real balance — portal does not return outAmount.
   let tokenAmountRaw = 0n;
@@ -196,11 +241,11 @@ async function buyOnPump(mint, solAmount) {
     throw err;
   }
 
-  console.log(`[pumpPortal] bought ${mint}: +${tokenAmountRaw.toString()} raw tokens for ${sizeSol} SOL (sig ${sent.signature})`);
+  console.log(`[pumpPortal] bought ${mint}: +${tokenAmountRaw.toString()} raw tokens for ${usedSol} SOL (sig ${sent.signature})`);
 
   return {
     ...sent,
-    sizeSol,
+    sizeSol: usedSol,
     tokenAmountRaw: tokenAmountRaw.toString(),
     via: 'pumpPortal',
     quote: { outAmount: tokenAmountRaw.toString() },
