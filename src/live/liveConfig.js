@@ -11,8 +11,8 @@ let cached = {
   // Allow LOW + MEDIUM + HIGH so the bot trades more in a volatile market.
   minRecommendTier: 'LOW_MEDIUM', // 'LOW' or 'LOW_MEDIUM' (HIGH is allowed when tradeable)
   maxTokensPerDay: Math.max(staticConfig.MAX_TOKENS_PER_DAY, 50), // high daily quota
-  maxDevPercent: 99, // no practical hard cap (scoring only)
-  maxTop10Percent: 99, // no practical hard cap (scoring only)
+  maxDevPercent: 30, // default gate; set 99 via Telegram to effectively disable
+  maxTop10Percent: 70, // default gate; set 99 via Telegram to effectively disable
   capitalPct: staticConfig.CAPITAL_PCT,
   maxPositionSol: staticConfig.MAX_POSITION_SOL,
   bscCapitalPct: staticConfig.BSC_CAPITAL_PCT,
@@ -29,15 +29,28 @@ let cached = {
   // BSC-only: reject any token whose buy or sell tax exceeds these.
   maxBuyTaxPct: 50,
   maxSellTaxPct: 50,
-  // DexScreener-enforced floor: do not enter below this USD market cap.
-  minMarketCapUsd: 10000,
+  // DexScreener floor — 0 = disabled (user configures via Telegram).
+  minMarketCapUsd: 0,
+  // Ownership / safety gates (0 = off). Defaults protective but fully overridable.
+  maxSingleHolderPercent: 25,
+  maxHighOwnershipPercent: 80,
+  blockMintAuthority: true,
+  blockCreatorRug: true,
+  // Which Solana launchpad programs to subscribe to (interactive Telegram toggles).
+  launchpadPumpfun: true,
+  launchpadLaunchlab: true,
+  launchpadMeteora: true,
+  launchpadMoonshot: true,
+  launchpadBoop: true,
 };
 
 // The settings added by supabase/migrations/002_*.sql and 003_*.sql. Until
 // those have been run, these live in memory only.
 const MIGRATION_KEYS = [
   'takeProfitPct', 'stopLossPct', 'maxHoldMin', 'maxRiskScore', 'heartbeatMin',
-  'mediumMaxDevPercent', 'mediumMaxTop10Percent', 'mediumMaxScore', 'maxBuyTaxPct', 'maxSellTaxPct', 'minMarketCapUsd',
+  'mediumMaxDevPercent', 'mediumMaxTop10Percent', 'mediumMaxScore', 'maxBuyTaxPct', 'maxSellTaxPct', 'minMarketCapUsd', 'maxSingleHolderPercent', 'maxHighOwnershipPercent',
+  'blockMintAuthority', 'blockCreatorRug',
+  'launchpadPumpfun', 'launchpadLaunchlab', 'launchpadMeteora', 'launchpadMoonshot', 'launchpadBoop',
 ];
 let migrated = true;
 
@@ -65,6 +78,15 @@ const COLUMNS = {
   maxBuyTaxPct: 'max_buy_tax_pct',
   maxSellTaxPct: 'max_sell_tax_pct',
   minMarketCapUsd: 'min_market_cap_usd',
+  maxSingleHolderPercent: 'max_single_holder_percent',
+  maxHighOwnershipPercent: 'max_high_ownership_percent',
+  blockMintAuthority: 'block_mint_authority',
+  blockCreatorRug: 'block_creator_rug',
+  launchpadPumpfun: 'launchpad_pumpfun',
+  launchpadLaunchlab: 'launchpad_launchlab',
+  launchpadMeteora: 'launchpad_meteora',
+  launchpadMoonshot: 'launchpad_moonshot',
+  launchpadBoop: 'launchpad_boop',
 };
 
 // Value from a DB column, or the last known value if the column doesn't exist yet.
@@ -98,6 +120,15 @@ function mapRow(row) {
     maxBuyTaxPct: num(row, 'max_buy_tax_pct', cached.maxBuyTaxPct),
     maxSellTaxPct: num(row, 'max_sell_tax_pct', cached.maxSellTaxPct),
     minMarketCapUsd: num(row, 'min_market_cap_usd', cached.minMarketCapUsd),
+    maxSingleHolderPercent: num(row, 'max_single_holder_percent', cached.maxSingleHolderPercent),
+    maxHighOwnershipPercent: num(row, 'max_high_ownership_percent', cached.maxHighOwnershipPercent),
+    blockMintAuthority: row.block_mint_authority === undefined || row.block_mint_authority === null ? cached.blockMintAuthority : Boolean(row.block_mint_authority),
+    blockCreatorRug: row.block_creator_rug === undefined || row.block_creator_rug === null ? cached.blockCreatorRug : Boolean(row.block_creator_rug),
+    launchpadPumpfun: row.launchpad_pumpfun === undefined || row.launchpad_pumpfun === null ? cached.launchpadPumpfun : Boolean(row.launchpad_pumpfun),
+    launchpadLaunchlab: row.launchpad_launchlab === undefined || row.launchpad_launchlab === null ? cached.launchpadLaunchlab : Boolean(row.launchpad_launchlab),
+    launchpadMeteora: row.launchpad_meteora === undefined || row.launchpad_meteora === null ? cached.launchpadMeteora : Boolean(row.launchpad_meteora),
+    launchpadMoonshot: row.launchpad_moonshot === undefined || row.launchpad_moonshot === null ? cached.launchpadMoonshot : Boolean(row.launchpad_moonshot),
+    launchpadBoop: row.launchpad_boop === undefined || row.launchpad_boop === null ? cached.launchpadBoop : Boolean(row.launchpad_boop),
   };
 }
 

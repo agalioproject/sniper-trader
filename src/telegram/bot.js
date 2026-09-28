@@ -139,8 +139,33 @@ const SETTINGS = {
     max: 500000,
     presets: [0, 5000, 10000, 25000, 50000, 69000],
     steps: [1000, 5000],
-    parent: 'm:risk',
-    describe: (c) => `Only enter tokens with DexScreener market cap ≥ $${Number(c.minMarketCapUsd || 0).toLocaleString()}. Default $10,000. Set 0 to disable. Brand-new launches with no pair are treated as $0 and blocked.`,
+    parent: 'm:filters',
+    zeroLabel: 'Off',
+    describe: (c) => `Only enter if DexScreener MC ≥ this. 0 = off (no MC gate).`,
+  },
+  maxSingleHolderPercent: {
+    cmd: 'setsingle',
+    title: '👤 Max single holder %',
+    unit: '%',
+    min: 0,
+    max: 100,
+    presets: [0, 15, 25, 40, 50, 100],
+    steps: [5, 10],
+    parent: 'm:filters',
+    zeroLabel: 'Off',
+    describe: () => `Reject if one non-pool wallet holds more than this %. 0 = off.`,
+  },
+  maxHighOwnershipPercent: {
+    cmd: 'sethighown',
+    title: '🏦 Max high ownership %',
+    unit: '%',
+    min: 0,
+    max: 100,
+    presets: [0, 70, 80, 90, 100],
+    steps: [5, 10],
+    parent: 'm:filters',
+    zeroLabel: 'Off',
+    describe: () => `Reject if top holders exceed this %. 0 = off.`,
   },
   maxRiskScore: {
     cmd: 'setscore',
@@ -322,6 +347,9 @@ function isAuthorized(chatId) {
 // Views (text + inline keyboard). Every screen has a way back.
 // ---------------------------------------------------------------------
 const btn = (text, data) => ({ text, callback_data: data });
+const webAppBtn = (text, url) => ({ text, web_app: { url } });
+const DASHBOARD_WEBAPP_URL = process.env.DASHBOARD_WEBAPP_URL || process.env.DASHBOARD_URL || '';
+
 const view = (text, inline_keyboard) => ({ text: text.length > 4000 ? text.slice(0, 3990) + '\n…' : text, reply_markup: { inline_keyboard } });
 
 function statusText(cfg) {
@@ -358,6 +386,8 @@ function mainView(cfg, banner) {
     [btn('💼 Wallet', 'bal'), btn('💰 Capital %', 'm:cap')],
     [btn('🎯 Take profit', 'm:exit'), btn('🛡 Risk tier', 'm:risk')],
     [btn('🔍 Filters', 'm:filters'), btn('📅 Daily limit', 'v:maxTokensPerDay')],
+    [btn('🚀 Platforms', 'm:pads'), btn('🛡 Safety toggles', 'm:safety')],
+    ...(DASHBOARD_WEBAPP_URL ? [[webAppBtn('🌐 Open control panel', DASHBOARD_WEBAPP_URL)]] : []),
     [btn('❓ Help', 'help')],
   ]);
 }
@@ -388,6 +418,52 @@ function riskView(cfg, banner) {
     [
       [btn(`${low ? '✅ ' : ''}LOW only`, 't:LOW'), btn(`${low ? '' : '✅ '}LOW + MEDIUM`, 't:LOW_MEDIUM')],
       [btn('⬅️ Back', 'menu')],
+    ]
+  );
+}
+
+
+function platformsView(cfg, banner) {
+  const row = (key, label) => {
+    const on = cfg[key] !== false;
+    return [btn(`${on ? '✅' : '⬜'} ${label}`, `pad:${key}`)];
+  };
+  return view(
+    (banner ? banner + '\n\n' : '') +
+      '🚀 *Launchpads to scan*\n\n' +
+      'Toggle which Solana programs the bot listens to. Off = ignore that pad.\n' +
+      'Changes apply on the next feed reconnect (or restart).',
+    [
+      row('launchpadPumpfun', 'pump.fun'),
+      row('launchpadLaunchlab', 'Raydium LaunchLab / LetsBonk'),
+      row('launchpadMeteora', 'Meteora DBC / Believe'),
+      row('launchpadMoonshot', 'Moonshot'),
+      row('launchpadBoop', 'Boop.fun'),
+      [btn('« Menu', 'menu')],
+    ]
+  );
+}
+
+function safetyView(cfg, banner) {
+  const mintOn = cfg.blockMintAuthority !== false;
+  const rugOn = cfg.blockCreatorRug !== false;
+  return view(
+    (banner ? banner + '\n\n' : '') +
+      '🛡 *Safety toggles* (all configurable)\n\n' +
+      `Mint authority block: ${mintOn ? 'ON' : 'OFF'}\n` +
+      `Creator rug history block: ${rugOn ? 'ON' : 'OFF'}\n` +
+      `Min MC: $${cfg.minMarketCapUsd || 0} (0=off)\n` +
+      `Max single holder: ${cfg.maxSingleHolderPercent || 0}% (0=off)\n` +
+      `Max high ownership: ${cfg.maxHighOwnershipPercent || 0}% (0=off)\n` +
+      `Max dev %: ${cfg.maxDevPercent}% · Max top10 %: ${cfg.maxTop10Percent}%`,
+    [
+      [btn(mintOn ? '✅ Block mint authority' : '⬜ Block mint authority', 'safe:mint')],
+      [btn(rugOn ? '✅ Block creator rugs' : '⬜ Block creator rugs', 'safe:rug')],
+      [btn('💵 Min market cap', 'v:minMarketCapUsd')],
+      [btn('👤 Max single holder', 'v:maxSingleHolderPercent')],
+      [btn('🏦 Max high ownership', 'v:maxHighOwnershipPercent')],
+      [btn('🔍 Dev / top10 filters', 'm:filters')],
+      [btn('« Menu', 'menu')],
     ]
   );
 }
@@ -892,6 +968,30 @@ b.onText(/^\/cancel\b/i, (msg) => {
           next = customPromptView(arg1);
           break;
 
+
+        case 'pad': {
+          const key = arg1;
+          const allowed = ['launchpadPumpfun','launchpadLaunchlab','launchpadMeteora','launchpadMoonshot','launchpadBoop'];
+          if (!allowed.includes(key)) throw new Error('Unknown launchpad');
+          const cur = getConfig()[key] !== false;
+          await updateConfig({ [key]: !cur });
+          toast = `${key.replace('launchpad','')} ${!cur ? 'ON' : 'OFF'}`;
+          next = platformsView(getConfig());
+          break;
+        }
+        case 'safe': {
+          if (arg1 === 'mint') {
+            const cur = getConfig().blockMintAuthority !== false;
+            await updateConfig({ blockMintAuthority: !cur });
+            toast = `Mint authority block ${!cur ? 'ON' : 'OFF'}`;
+          } else if (arg1 === 'rug') {
+            const cur = getConfig().blockCreatorRug !== false;
+            await updateConfig({ blockCreatorRug: !cur });
+            toast = `Creator rug block ${!cur ? 'ON' : 'OFF'}`;
+          }
+          next = safetyView(getConfig());
+          break;
+        }
         case 't': { // risk tier
           const tier = arg1 === 'LOW' ? 'LOW' : 'LOW_MEDIUM';
           await updateConfig({ minRecommendTier: tier });

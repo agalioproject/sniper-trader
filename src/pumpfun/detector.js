@@ -2,7 +2,8 @@ const WebSocket = require('ws');
 const { HELIUS_WSS_URL } = require('../config');
 const { getConnection } = require('../solana/wallet');
 const runtime = require('../live/runtime');
-const { LAUNCHPADS, matchLaunchpad } = require('./launchpads');
+const { LAUNCHPADS, matchLaunchpad, enabledLaunchpads } = require('./launchpads');
+const { getConfig } = require('../live/liveConfig');
 
 const STALL_MS = Number(process.env.DETECTOR_STALL_MS || 60000);
 const CONNECT_TIMEOUT_MS = 30000;
@@ -76,13 +77,14 @@ class PumpFunDetector {
     this.startWatchdog();
 
     this.ws.on('open', () => {
-      const names = LAUNCHPADS.map((p) => p.name).join(', ');
+      const pads = enabledLaunchpads(getConfig());
+      const names = pads.map((p) => p.name).join(', ') || '(none enabled)';
       console.log(`[launchpad-detector] connected — subscribing to: ${names}`);
       runtime.setDetector('solana', 'connected');
       this.lastMsgAt = Date.now();
       this.reconnectDelayMs = 1000;
 
-      for (const pad of LAUNCHPADS) {
+      for (const pad of pads) {
         const id = this.nextSubId++;
         this.subIdToProgram.set(id, pad.programId);
         this.ws.send(
@@ -122,8 +124,9 @@ class PumpFunDetector {
       const sub = msg.params && msg.params.subscription;
       // We may not have sub->program map from server; scan logs for known program mentions is hard.
       // Match create hints against ALL pads — first match wins.
+      const active = enabledLaunchpads(getConfig());
       let pad = null;
-      for (const candidate of LAUNCHPADS) {
+      for (const candidate of active) {
         pad = matchLaunchpad(logs, candidate.programId);
         if (pad) break;
       }

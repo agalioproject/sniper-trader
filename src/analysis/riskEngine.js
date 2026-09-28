@@ -52,61 +52,47 @@ function reject(chain, address, reason) {
 }
 
 
-// Absolute safety floor — CANNOT be loosened by Telegram / live config.
-// Matches wallet risk screens: rugger creator, top-10 concentration, single whale.
-const HARD = {
-  TOP10_MAX: 70,          // top 10 hold > 70% → reject
-  HIGH_OWNERSHIP_MAX: 80, // top holders > 80% → reject
-  SINGLE_HOLDER_MAX: 25,  // any one wallet > 25% → reject
-  DEV_MAX: 20,            // creator/dev wallet > 20% → reject
-};
+// Configurable safety gates (Telegram / live config). Set limit to 0 to disable.
+function ownershipReject(chain, address, cfg, { top10Percent, devPercent, holders }) {
+  const maxTop10 = Number(cfg.maxTop10Percent ?? 99);
+  const maxDev = Number(cfg.maxDevPercent ?? 99);
+  const maxHigh = Number(cfg.maxHighOwnershipPercent ?? 0);
+  const maxSingle = Number(cfg.maxSingleHolderPercent ?? 0);
 
-function hardOwnershipReject(chain, address, { top10Percent, devPercent, holders }) {
-  if (top10Percent != null && top10Percent > HARD.HIGH_OWNERSHIP_MAX) {
-    return reject(chain, address, `HARD BLOCK: top holders control ~${top10Percent.toFixed(1)}% of supply (>${HARD.HIGH_OWNERSHIP_MAX}%). Matches "High ownership" risk screens.`);
+  if (maxHigh > 0 && top10Percent != null && top10Percent > maxHigh) {
+    return reject(chain, address, `Top holders control ~${top10Percent.toFixed(1)}% of supply (your max ${maxHigh}%).`);
   }
-  if (top10Percent != null && top10Percent > HARD.TOP10_MAX) {
-    return reject(chain, address, `HARD BLOCK: top 10 holders control ~${top10Percent.toFixed(1)}% of supply (>${HARD.TOP10_MAX}%). Concentration rug risk.`);
+  if (maxTop10 < 100 && top10Percent != null && top10Percent > maxTop10) {
+    return reject(chain, address, `Top 10 holders control ~${top10Percent.toFixed(1)}% (your max ${maxTop10}%).`);
   }
-  if (devPercent != null && devPercent > HARD.DEV_MAX) {
-    return reject(chain, address, `HARD BLOCK: creator/dev holds ~${devPercent.toFixed(1)}% of supply (>${HARD.DEV_MAX}%).`);
+  if (maxDev < 100 && devPercent != null && devPercent > maxDev) {
+    return reject(chain, address, `Creator/dev holds ~${devPercent.toFixed(1)}% (your max ${maxDev}%).`);
   }
-  if (Array.isArray(holders) && holders.length) {
+  if (maxSingle > 0 && Array.isArray(holders) && holders.length) {
     for (const h of holders) {
       const tag = String(h.tag || h.account_address || '').toLowerCase();
-      // skip bonding curve / pool / dead / burned style accounts when tagged
       if (/bond|curve|pool|raydium|pump|dead|burn|locker/i.test(tag)) continue;
-      const pct = Number(h.percent || 0) * (Number(h.percent) <= 1 ? 100 : 1);
-      // GoPlus sometimes returns 0-1 fraction, sometimes already %
       const pctNorm = Number(h.percent || 0) <= 1.5 ? Number(h.percent || 0) * 100 : Number(h.percent || 0);
-      if (pctNorm > HARD.SINGLE_HOLDER_MAX) {
-        return reject(chain, address, `HARD BLOCK: single holder owns ~${pctNorm.toFixed(1)}% of supply (>${HARD.SINGLE_HOLDER_MAX}%). Whale dump risk.`);
+      if (pctNorm > maxSingle) {
+        return reject(chain, address, `Single holder owns ~${pctNorm.toFixed(1)}% (your max ${maxSingle}%).`);
       }
     }
   }
   return null;
 }
 
-function hardCreatorRugReject(chain, address, sec) {
+function creatorRugReject(chain, address, sec, cfg) {
+  if (!cfg.blockCreatorRug) return null;
   if (!sec || typeof sec !== 'object') return null;
-  // GoPlus / similar flags — any known rug / malicious creator signal
-  const flags = [
-    sec.creator_rugged,
-    sec.creator_rug_history,
-    sec.is_rug,
-    sec.malicious_address,
-    sec.creator_malicious,
-    sec.known_scammer,
-  ];
+  const flags = [sec.creator_rugged, sec.creator_rug_history, sec.is_rug, sec.malicious_address, sec.creator_malicious, sec.known_scammer];
   for (const f of flags) {
     if (f === true || f === '1' || f === 1) {
-      return reject(chain, address, 'HARD BLOCK: creator has a history of rugged / malicious tokens.');
+      return reject(chain, address, 'Creator has a history of rugged / malicious tokens (toggle off in Telegram if you want to allow).');
     }
   }
-  // nested creator object
   const c = sec.creator || sec.creator_info || {};
   if (c && (c.rugged === true || c.rugged === '1' || c.malicious === true || Number(c.rug_count || 0) > 0)) {
-    return reject(chain, address, 'HARD BLOCK: creator history shows prior rugs.');
+    return reject(chain, address, 'Creator history shows prior rugs (toggle off in Telegram if you want to allow).');
   }
   return null;
 }
@@ -166,11 +152,11 @@ async function assessSolanaToken(mint, { requireSellable = true } = {}) {
       return reject('solana', mint, 'Freeze authority is still active — the creator can block anyone from trading at will.');
     }
     if (sec.mintable && sec.mintable.status === '1') {
-      return reject(
-        'solana',
-        mint,
-        'HARD BLOCK: mint authority is still active — creator can print unlimited tokens and dilute you to zero.'
-      );
+      if (cfg.blockMintAuthority !== false) {
+        return reject('solana', mint, 'Mint authority still active — creator can print tokens (disable in Telegram → Safety if you want to allow).');
+      }
+      score += 25;
+      reasons.push('Mint authority is still active — supply can be inflated after you buy.');
     }
     if (Array.isArray(sec.holders) && sec.holders.length) {
       top10Percent = sec.holders.reduce((sum, h) => sum + Number(h.percent || 0), 0) * 100;
@@ -182,10 +168,10 @@ async function assessSolanaToken(mint, { requireSellable = true } = {}) {
     }
   }
 
-  // HARD safety floor (cannot be disabled by Telegram maxDev / maxTop10 settings).
-  const rugBlock = hardCreatorRugReject('solana', mint, sec);
+  // Configurable safety (Telegram: Filters / Safety / Platforms)
+  const rugBlock = creatorRugReject('solana', mint, sec, cfg);
   if (rugBlock) return rugBlock;
-  const ownBlock = hardOwnershipReject('solana', mint, {
+  const ownBlock = ownershipReject('solana', mint, cfg, {
     top10Percent,
     devPercent,
     holders: sec && Array.isArray(sec.holders) ? sec.holders : null,
@@ -243,7 +229,7 @@ async function assessSolanaToken(mint, { requireSellable = true } = {}) {
   // have no pair yet → treated as MC 0 → blocked until they clear the floor.
   let marketCapUsd = null;
   let liquidityUsd = null;
-  const minMc = Number(cfg.minMarketCapUsd ?? 10000);
+  const minMc = Number(cfg.minMarketCapUsd ?? 0);
   if (minMc > 0) {
     try {
       const mkt = await getTokenMarket(mint);
@@ -401,14 +387,17 @@ async function assessBscToken(address) {
   if (top10Percent > 20) score += Math.min(30, Math.floor((top10Percent - 20) * 0.6));
   if (holders.length) reasons.push(`Top 10 holders control ~${top10Percent.toFixed(1)}% of supply.`);
 
-  // HARD safety floor — same as Solana, ignores Telegram maxDev/maxTop10
-  const rugBlock = hardCreatorRugReject('bsc', address, sec);
+  const rugBlock = creatorRugReject('bsc', address, sec, cfg);
   if (rugBlock) return rugBlock;
-  const ownBlock = hardOwnershipReject('bsc', address, { top10Percent, devPercent, holders });
+  const ownBlock = ownershipReject('bsc', address, cfg, { top10Percent, devPercent, holders });
   if (ownBlock) return ownBlock;
 
   if (sec.is_mintable === '1') {
-    return reject('bsc', address, 'HARD BLOCK: contract can mint new supply after launch.');
+    if (cfg.blockMintAuthority !== false) {
+      return reject('bsc', address, 'Contract can mint new supply (disable mint-authority block in Telegram to allow).');
+    }
+    score += 25;
+    reasons.push('Contract can mint new supply after launch.');
   }
   if (sec.hidden_owner === '1' || sec.can_take_back_ownership === '1') {
     score += 20;
@@ -440,7 +429,7 @@ async function assessBscToken(address) {
 
   let marketCapUsd = null;
   let liquidityUsd = null;
-  const minMc = Number(cfg.minMarketCapUsd ?? 10000);
+  const minMc = Number(cfg.minMarketCapUsd ?? 0);
   if (minMc > 0) {
     try {
       const mkt = await getTokenMarket(address);
