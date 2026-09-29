@@ -322,9 +322,9 @@ async function updateConfig(patch) {
   if (Object.keys(fields).length) {
     const { error } = await supabase.from('bot_config').update({ ...fields, updated_by: 'telegram' }).eq('id', 1);
     if (error) {
-      const missingColumn = /column|schema cache/i.test(error.message) && Object.keys(patch).some((k) => MIGRATION_KEYS.includes(k));
-      if (!missingColumn) throw error;
-      // Column not there yet — keep the change in memory rather than failing the tap.
+      // Missing optional columns (platforms/safety) → keep in memory so Telegram still works.
+      if (!/column|schema cache|does not exist/i.test(error.message)) throw error;
+      console.warn('[telegram] config column missing in Supabase — applying in memory only:', error.message);
     } else {
       // Force an immediate re-read instead of waiting on the realtime push or
       // the 15s poll, so what we show next is the true, just-applied state.
@@ -428,44 +428,55 @@ function platformsView(cfg, banner) {
     const on = cfg[key] !== false;
     return [btn(`${on ? '✅' : '⬜'} ${label}`, `pad:${key}`)];
   };
-  return view(
-    (banner ? banner + '\n\n' : '') +
-      '🚀 *Launchpads to scan*\n\n' +
-      'Toggle which Solana programs the bot listens to. Off = ignore that pad.\n' +
-      'Changes apply on the next feed reconnect (or restart).',
-    [
-      row('launchpadPumpfun', 'pump.fun'),
-      row('launchpadLaunchlab', 'Raydium LaunchLab / LetsBonk'),
-      row('launchpadMeteora', 'Meteora DBC / Believe'),
-      row('launchpadMoonshot', 'Moonshot'),
-      row('launchpadBoop', 'Boop.fun'),
-      [btn('« Menu', 'menu')],
-    ]
-  );
+  const lines = [
+    banner || null,
+    '🚀 Launchpads to scan',
+    '',
+    'Tap a row to turn it ON or OFF.',
+    'OFF = bot ignores new coins from that platform.',
+    'Applies after the feed reconnects (or restart).',
+    '',
+    `pump.fun: ${cfg.launchpadPumpfun !== false ? 'ON' : 'OFF'}`,
+    `LaunchLab / LetsBonk: ${cfg.launchpadLaunchlab !== false ? 'ON' : 'OFF'}`,
+    `Meteora / Believe: ${cfg.launchpadMeteora !== false ? 'ON' : 'OFF'}`,
+    `Moonshot: ${cfg.launchpadMoonshot !== false ? 'ON' : 'OFF'}`,
+    `Boop.fun: ${cfg.launchpadBoop !== false ? 'ON' : 'OFF'}`,
+  ].filter((x) => x != null);
+  return view(lines.join('\n'), [
+    row('launchpadPumpfun', 'pump.fun'),
+    row('launchpadLaunchlab', 'Raydium LaunchLab / LetsBonk'),
+    row('launchpadMeteora', 'Meteora DBC / Believe'),
+    row('launchpadMoonshot', 'Moonshot'),
+    row('launchpadBoop', 'Boop.fun'),
+    [btn('« Menu', 'menu')],
+  ]);
 }
 
 function safetyView(cfg, banner) {
   const mintOn = cfg.blockMintAuthority !== false;
   const rugOn = cfg.blockCreatorRug !== false;
-  return view(
-    (banner ? banner + '\n\n' : '') +
-      '🛡 *Safety toggles* (all configurable)\n\n' +
-      `Mint authority block: ${mintOn ? 'ON' : 'OFF'}\n` +
-      `Creator rug history block: ${rugOn ? 'ON' : 'OFF'}\n` +
-      `Min MC: $${cfg.minMarketCapUsd || 0} (0=off)\n` +
-      `Max single holder: ${cfg.maxSingleHolderPercent || 0}% (0=off)\n` +
-      `Max high ownership: ${cfg.maxHighOwnershipPercent || 0}% (0=off)\n` +
-      `Max dev %: ${cfg.maxDevPercent}% · Max top10 %: ${cfg.maxTop10Percent}%`,
-    [
-      [btn(mintOn ? '✅ Block mint authority' : '⬜ Block mint authority', 'safe:mint')],
-      [btn(rugOn ? '✅ Block creator rugs' : '⬜ Block creator rugs', 'safe:rug')],
-      [btn('💵 Min market cap', 'v:minMarketCapUsd')],
-      [btn('👤 Max single holder', 'v:maxSingleHolderPercent')],
-      [btn('🏦 Max high ownership', 'v:maxHighOwnershipPercent')],
-      [btn('🔍 Dev / top10 filters', 'm:filters')],
-      [btn('« Menu', 'menu')],
-    ]
-  );
+  const lines = [
+    banner || null,
+    '🛡 Safety toggles (all configurable)',
+    '',
+    `Mint authority block: ${mintOn ? 'ON' : 'OFF'}`,
+    `Creator rug history block: ${rugOn ? 'ON' : 'OFF'}`,
+    `Min market cap: $${Number(cfg.minMarketCapUsd || 0)} (0 = off)`,
+    `Max single holder: ${Number(cfg.maxSingleHolderPercent || 0)}% (0 = off)`,
+    `Max high ownership: ${Number(cfg.maxHighOwnershipPercent || 0)}% (0 = off)`,
+    `Max dev %: ${Number(cfg.maxDevPercent)} · Max top10 %: ${Number(cfg.maxTop10Percent)}`,
+    '',
+    'Tap a toggle or open a limit to change it.',
+  ].filter((x) => x != null);
+  return view(lines.join('\n'), [
+    [btn(mintOn ? '✅ Block mint authority' : '⬜ Block mint authority', 'safe:mint')],
+    [btn(rugOn ? '✅ Block creator rugs' : '⬜ Block creator rugs', 'safe:rug')],
+    [btn('💵 Min market cap', 'v:minMarketCapUsd')],
+    [btn('👤 Max single holder', 'v:maxSingleHolderPercent')],
+    [btn('🏦 Max high ownership', 'v:maxHighOwnershipPercent')],
+    [btn('🔍 Dev / top10 filters', 'm:filters')],
+    [btn('« Menu', 'menu')],
+  ]);
 }
 
 function filtersView(cfg) {
@@ -660,11 +671,17 @@ function start() {
   const send = (chatId, v) => b.sendMessage(chatId, v.text, { reply_markup: v.reply_markup });
 
   async function show(chatId, messageId, v) {
+    if (!v || !v.text) {
+      console.error('[telegram] show() called with empty view');
+      return;
+    }
     try {
       await b.editMessageText(v.text, { chat_id: chatId, message_id: messageId, reply_markup: v.reply_markup });
     } catch (err) {
-      if (/message is not modified/i.test(err.message)) return; // nothing changed — fine
-      throw err;
+      if (/message is not modified/i.test(err.message)) return;
+      // Message too old / can't edit → send a fresh screen so the user still sees the menu
+      console.warn('[telegram] editMessageText failed, sending new message:', err.message);
+      await b.sendMessage(chatId, v.text, { reply_markup: v.reply_markup });
     }
   }
 
@@ -928,6 +945,8 @@ b.onText(/^\/cancel\b/i, (msg) => {
             : arg1 === 'exit' ? exitView(getConfig())
             : arg1 === 'medium' ? mediumFiltersView(getConfig())
             : arg1 === 'tax' ? taxFiltersView(getConfig())
+            : arg1 === 'pads' ? platformsView(getConfig())
+            : arg1 === 'safety' ? safetyView(getConfig())
             : mainView(getConfig());
           break;
 
