@@ -152,7 +152,7 @@ async function assessSolanaToken(mint, { requireSellable = true } = {}) {
       return reject('solana', mint, 'Freeze authority is still active — the creator can block anyone from trading at will.');
     }
     if (sec.mintable && sec.mintable.status === '1') {
-      if (cfg.blockMintAuthority !== false) {
+      if (cfg.blockMintAuthority) {
         return reject('solana', mint, 'Mint authority still active — creator can print tokens (disable in Telegram → Safety if you want to allow).');
       }
       score += 25;
@@ -393,7 +393,7 @@ async function assessBscToken(address) {
   if (ownBlock) return ownBlock;
 
   if (sec.is_mintable === '1') {
-    if (cfg.blockMintAuthority !== false) {
+    if (cfg.blockMintAuthority) {
       return reject('bsc', address, 'Contract can mint new supply (disable mint-authority block in Telegram to allow).');
     }
     score += 25;

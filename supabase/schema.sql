@@ -1,110 +1,105 @@
--- Run this once in the Supabase SQL editor for your project.
--- This is the shared "brain" between the always-on engine, the Telegram
--- bot, and the web dashboard — all three read/write the same tables, so
--- a change from any one of them shows up in the others within seconds.
+-- =============================================================================
+-- Sniper Trader — full Supabase schema (run once on a NEW project)
+-- Copy this entire file into Supabase → SQL Editor → Run.
+-- For existing projects that already ran schema + 002 + 003, only run
+-- migrations/004_safety_platforms_mcap.sql instead.
+-- =============================================================================
 
--- ---------------------------------------------------------------------
--- bot_config: exactly one row. Every filter that should be adjustable
--- live (no redeploy) lives here instead of in .env. The engine polls +
--- subscribes to this table and applies changes without restarting.
--- ---------------------------------------------------------------------
 create table if not exists bot_config (
-  id smallint primary key default 1,
+  id integer primary key default 1 check (id = 1),
   paused boolean not null default false,
   enable_solana boolean not null default true,
   enable_bsc boolean not null default false,
-  min_recommend_tier text not null default 'LOW', -- 'LOW' or 'LOW_MEDIUM'
-  max_tokens_per_day integer not null default 5,
-  max_dev_percent numeric not null default 30,
-  max_top10_percent numeric not null default 70,
-  capital_pct numeric not null default 5,
+  min_recommend_tier text not null default 'LOW_MEDIUM'
+    check (min_recommend_tier in ('LOW', 'LOW_MEDIUM')),
+  max_tokens_per_day integer not null default 50,
+  max_dev_percent numeric not null default 99,
+  max_top10_percent numeric not null default 99,
+  capital_pct numeric not null default 10,
   max_position_sol numeric not null default 0.5,
-  bsc_capital_pct numeric not null default 5,
+  bsc_capital_pct numeric not null default 10,
   bsc_max_position_bnb numeric not null default 0.1,
-  take_profit_pct numeric not null default 0,   -- 0 = auto by risk tier
-  stop_loss_pct numeric not null default 0,     -- 0 = auto by risk tier (positive: 25 = -25%)
-  max_hold_min numeric not null default 0,      -- 0 = auto by risk tier
-  max_risk_score numeric not null default 50,   -- entry quality gate (LOW <= 25, MEDIUM <= 50)
-  heartbeat_min integer not null default 60,    -- 0 = off
-  medium_max_dev_percent numeric not null default 45,
-  medium_max_top10_percent numeric not null default 85,
-  medium_max_score numeric not null default 50,
-  max_buy_tax_pct numeric not null default 15,   -- BSC only
-  max_sell_tax_pct numeric not null default 15,  -- BSC only
+  -- Exit (0 = auto by risk tier)
+  take_profit_pct numeric not null default 0,
+  stop_loss_pct numeric not null default 0,
+  max_hold_min numeric not null default 0,
+  max_risk_score numeric not null default 100,
+  heartbeat_min integer not null default 60,
+  -- MEDIUM tier ceilings
+  medium_max_dev_percent numeric not null default 99,
+  medium_max_top10_percent numeric not null default 99,
+  medium_max_score numeric not null default 100,
+  -- BSC tax
+  max_buy_tax_pct numeric not null default 50,
+  max_sell_tax_pct numeric not null default 50,
+  -- Safety / filters (0 = off for numeric gates)
+  min_market_cap_usd numeric not null default 0,
+  max_single_holder_percent numeric not null default 0,
+  max_high_ownership_percent numeric not null default 0,
+  block_mint_authority boolean not null default false,
+  block_creator_rug boolean not null default false,
+  -- Launchpads
+  launchpad_pumpfun boolean not null default true,
+  launchpad_launchlab boolean not null default true,
+  launchpad_meteora boolean not null default true,
+  launchpad_moonshot boolean not null default true,
+  launchpad_boop boolean not null default true,
   updated_at timestamptz not null default now(),
-  updated_by text -- 'telegram', 'dashboard', 'default'
+  updated_by text
 );
 
 insert into bot_config (id) values (1) on conflict (id) do nothing;
 
--- Keep updated_at current on every change, so subscribers can tell a row
--- actually changed vs. a no-op write.
-create or replace function set_updated_at()
-returns trigger as $$
+create or replace function set_bot_config_updated_at()
+returns trigger language plpgsql as $$
 begin
   new.updated_at = now();
   return new;
 end;
-$$ language plpgsql;
+$$;
 
 drop trigger if exists bot_config_updated_at on bot_config;
 create trigger bot_config_updated_at
   before update on bot_config
-  for each row execute function set_updated_at();
+  for each row execute function set_bot_config_updated_at();
 
--- ---------------------------------------------------------------------
--- assessments: every token the engine ever evaluates, pass or fail —
--- this is the "instant feedback" feed the dashboard/Telegram read from.
--- ---------------------------------------------------------------------
+-- Assessments log (scanner / risk engine)
 create table if not exists assessments (
-  id bigint generated always as identity primary key,
-  chain text not null,             -- 'solana' | 'bsc'
-  address text not null,
-  verdict text not null,           -- 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | 'UNSAFE'
-  recommended boolean not null default false,
-  category text,
-  is_community_coin boolean,
-  dev_percent numeric,
-  top10_percent numeric,
-  curve_progress_pct numeric,
-  migrated boolean,
-  score numeric,
-  reasons jsonb,
-  exit_plan jsonb,
-  created_at timestamptz not null default now()
-);
-
-create index if not exists assessments_created_at_idx on assessments (created_at desc);
-create index if not exists assessments_recommended_idx on assessments (recommended, created_at desc);
-
--- ---------------------------------------------------------------------
--- positions: every buy/sell the engine actually executes (or would have,
--- in DRY_RUN). This is what a dashboard's "open positions" / "history"
--- view reads from.
--- ---------------------------------------------------------------------
-create table if not exists positions (
-  id bigint generated always as identity primary key,
+  id bigserial primary key,
   chain text not null,
   address text not null,
-  status text not null default 'open', -- 'open' | 'closed'
-  dry_run boolean not null default true,
-  size_native numeric,              -- SOL or BNB spent entering
-  entry_tx text,
-  exit_tx text,
-  exit_reason text,                 -- 'take_profit' | 'stop_loss' | 'max_age'
+  score numeric,
+  tier text,
+  recommended boolean,
+  tradeable boolean,
+  reasons jsonb,
+  payload jsonb,
+  created_at timestamptz not null default now()
+);
+create index if not exists assessments_created_at_idx on assessments (created_at desc);
+create index if not exists assessments_address_idx on assessments (address);
+
+-- Open / closed positions
+create table if not exists positions (
+  id bigserial primary key,
+  chain text not null,
+  mint text not null,
+  status text not null default 'open',
+  size_native numeric,
+  entry_native numeric,
+  exit_native numeric,
+  pnl_native numeric,
   pnl_pct numeric,
-  pnl_native numeric,               -- realized P&L in SOL/BNB
+  reason text,
+  signature_buy text,
+  signature_sell text,
   opened_at timestamptz not null default now(),
   closed_at timestamptz
 );
-
 create index if not exists positions_status_idx on positions (status, opened_at desc);
+create index if not exists positions_mint_idx on positions (mint);
 
--- ---------------------------------------------------------------------
--- Enable Realtime so the engine/dashboard get pushed changes instantly
--- instead of only polling. In the Supabase dashboard: Database > Replication
--- > toggle these tables on, or run:
--- ---------------------------------------------------------------------
+-- Optional: enable Realtime in Dashboard → Database → Replication, or:
 -- alter publication supabase_realtime add table bot_config;
 -- alter publication supabase_realtime add table assessments;
 -- alter publication supabase_realtime add table positions;

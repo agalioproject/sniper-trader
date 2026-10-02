@@ -11,8 +11,8 @@ let cached = {
   // Allow LOW + MEDIUM + HIGH so the bot trades more in a volatile market.
   minRecommendTier: 'LOW_MEDIUM', // 'LOW' or 'LOW_MEDIUM' (HIGH is allowed when tradeable)
   maxTokensPerDay: Math.max(staticConfig.MAX_TOKENS_PER_DAY, 50), // high daily quota
-  maxDevPercent: 30, // default gate; set 99 via Telegram to effectively disable
-  maxTop10Percent: 70, // default gate; set 99 via Telegram to effectively disable
+  maxDevPercent: 99, // Telegram-controllable; 99 ≈ off
+  maxTop10Percent: 99, // Telegram-controllable; 99 ≈ off
   capitalPct: staticConfig.CAPITAL_PCT,
   maxPositionSol: staticConfig.MAX_POSITION_SOL,
   bscCapitalPct: staticConfig.BSC_CAPITAL_PCT,
@@ -32,10 +32,10 @@ let cached = {
   // DexScreener floor — 0 = disabled (user configures via Telegram).
   minMarketCapUsd: 0,
   // Ownership / safety gates (0 = off). Defaults protective but fully overridable.
-  maxSingleHolderPercent: 25,
-  maxHighOwnershipPercent: 80,
-  blockMintAuthority: true,
-  blockCreatorRug: true,
+  maxSingleHolderPercent: 0, // 0 = off
+  maxHighOwnershipPercent: 0, // 0 = off
+  blockMintAuthority: false, // Telegram toggle
+  blockCreatorRug: false, // Telegram toggle
   // Which Solana launchpad programs to subscribe to (interactive Telegram toggles).
   launchpadPumpfun: true,
   launchpadLaunchlab: true,

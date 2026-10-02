@@ -362,13 +362,11 @@ function statusText(cfg) {
     `Min tier to recommend: ${cfg.minRecommendTier === 'LOW' ? 'LOW only' : 'LOW + MEDIUM'}`,
     `Daily quota used: ${getDailyCount()}/${cfg.maxTokensPerDay}`,
     `Exit: TP ${cfg.takeProfitPct > 0 ? '+' + fmt(cfg.takeProfitPct) + '%' : 'auto'} | SL ${cfg.stopLossPct > 0 ? '−' + fmt(cfg.stopLossPct) + '%' : 'auto'} | max hold ${cfg.maxHoldMin > 0 ? fmt(cfg.maxHoldMin) + 'm' : 'auto'}`,
-    `Risk limits: score ≤ ${fmt(cfg.maxRiskScore)} | MC ≥ $${fmt(cfg.minMarketCapUsd)} | dev% ≤ ${fmt(cfg.maxDevPercent)} | top10% ≤ ${fmt(cfg.maxTop10Percent)}`,
+    `Risk: score ≤ ${fmt(cfg.maxRiskScore)} | MC ≥ $${fmt(cfg.minMarketCapUsd) || 'off'} | dev ≤ ${fmt(cfg.maxDevPercent)}% | top10 ≤ ${fmt(cfg.maxTop10Percent)}%`,
     '',
     scannerHeadline() || 'Scanner: no chain running',
     `Open positions: ${runtime.getOpenPositions().length}`,
   ];
-  if (!getSupabase()) lines.push('', '⚠️ Supabase not configured — changes apply now but reset on restart.');
-  else if (!isMigrated()) lines.push('', '⚠️ Take-profit / stop-loss / max-hold / entry-quality / heartbeat settings work now but reset on restart. Run supabase/migrations/002_exit_and_scanner_settings.sql in the Supabase SQL editor to save them.');
   return lines.join('\n');
 }
 
@@ -453,8 +451,8 @@ function platformsView(cfg, banner) {
 }
 
 function safetyView(cfg, banner) {
-  const mintOn = cfg.blockMintAuthority !== false;
-  const rugOn = cfg.blockCreatorRug !== false;
+  const mintOn = Boolean(cfg.blockMintAuthority);
+  const rugOn = Boolean(cfg.blockCreatorRug);
   const lines = [
     banner || null,
     '🛡 Safety toggles (all configurable)',
@@ -516,7 +514,7 @@ function mediumFiltersView(cfg, banner) {
   return view(
     (banner ? `${banner}\n\n` : '') +
       `🎛 MEDIUM-tier filters\n\n` +
-      `${active ? '✅ Active — 🛡 Risk tier currently allows MEDIUM.' : '⚠️ Not in effect right now — 🛡 Risk tier is set to LOW only, so these limits are ignored (everything must clear the LOW limits in 🔍 Filters instead).'}\n\n` +
+      `${active ? 'Active (MEDIUM tier allowed).' : 'Not applied while tier is LOW only.'}\n\n` +
       `Dev allowance: ${fmt(cfg.mediumMaxDevPercent)}%\nTop-10 allowance: ${fmt(cfg.mediumMaxTop10Percent)}%\nScore ceiling: ${fmt(cfg.mediumMaxScore)}\n\n` +
       `These are separate, usually LOOSER limits that apply only to a token that would otherwise be scored MEDIUM risk. A LOW-tier token is unaffected — it always needs your 🔍 Filters numbers regardless of these.`,
     [
@@ -691,7 +689,7 @@ function start() {
   b.onText(/^\/start\b/, async (msg) => {
     const intro =
       `Meme coin scanner online.\nYour chat ID: ${msg.chat.id}\n` +
-      (TELEGRAM_CHAT_ID ? '' : '⚠️ TELEGRAM_CHAT_ID is not set — set it to this value on Railway so only you can control the bot.\n');
+      (TELEGRAM_CHAT_ID ? '' : 'Tip: set TELEGRAM_CHAT_ID to this number so only you control the bot.\n');
     await b.sendMessage(msg.chat.id, intro);
     if (isAuthorized(msg.chat.id)) await send(msg.chat.id, mainView(getConfig()));
   });
@@ -1000,11 +998,11 @@ b.onText(/^\/cancel\b/i, (msg) => {
         }
         case 'safe': {
           if (arg1 === 'mint') {
-            const cur = getConfig().blockMintAuthority !== false;
+            const cur = Boolean(getConfig().blockMintAuthority);
             await updateConfig({ blockMintAuthority: !cur });
             toast = `Mint authority block ${!cur ? 'ON' : 'OFF'}`;
           } else if (arg1 === 'rug') {
-            const cur = getConfig().blockCreatorRug !== false;
+            const cur = Boolean(getConfig().blockCreatorRug);
             await updateConfig({ blockCreatorRug: !cur });
             toast = `Creator rug block ${!cur ? 'ON' : 'OFF'}`;
           }
